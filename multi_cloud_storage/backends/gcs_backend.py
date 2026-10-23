@@ -11,7 +11,7 @@ from google.api_core import exceptions as gcs_exceptions
 from google.cloud import storage
 from google.oauth2 import service_account
 
-from .base import CloudStorageBackend
+from .base import CloudStorageBackend, build_content_disposition
 
 
 class GCSBackend(CloudStorageBackend):
@@ -109,7 +109,7 @@ class GCSBackend(CloudStorageBackend):
 		kwargs = {"version": "v4", "expiration": expiry, "method": "GET"}
 		if file_name:
 			disposition = "attachment" if as_attachment else "inline"
-			kwargs["response_disposition"] = f'{disposition}; filename="{file_name}"'
+			kwargs["response_disposition"] = build_content_disposition(disposition, file_name)
 		return blob.generate_signed_url(**kwargs)
 
 	def get_public_url(self, key):

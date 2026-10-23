@@ -1,10 +1,14 @@
 # Copyright (c) 2026, Bhushan Barbuddhe and contributors
 # For license information, please see license.txt
 
+import tempfile
 from unittest.mock import MagicMock
+from urllib.parse import quote, unquote
 
+import boto3
 import frappe
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ParamValidationError
+from botocore.stub import ANY, Stubber
 from frappe.tests import IntegrationTestCase
 
 from multi_cloud_storage.backends.s3_backend import S3Backend
@@ -136,3 +140,74 @@ class TestS3BackendGetUrl(IntegrationTestCase):
 		backend.get_url("a/b.pdf", file_name=None, bucket_type="private")
 		_, kwargs = mock_client.generate_presigned_url.call_args
 		self.assertNotIn("ResponseContentDisposition", kwargs["Params"])
+
+
+class TestS3BackendUploadMetadata(IntegrationTestCase):
+	"""
+	S3 rejects non-ASCII object metadata, so upload() must percent-encode the File name.
+	These run a real boto3 client (so botocore's own ASCII validation applies) with only
+	the network call stubbed.
+	"""
+
+	def _upload(self, file_name):
+		backend = S3Backend(_config())
+		client = boto3.client(
+			"s3", region_name="ap-south-1", aws_access_key_id="test", aws_secret_access_key="test"
+		)
+		backend._client = client
+		with Stubber(client) as stubber, tempfile.NamedTemporaryFile(suffix=".pdf") as f:
+			f.write(b"%PDF-1.4 test")
+			f.flush()
+			stubber.add_response("put_object", {})
+			backend.upload(f.name, "a/b.pdf", "application/pdf", True, file_name)
+			stubber.assert_no_pending_responses()
+			return stubber
+
+	def test_non_ascii_file_name_is_sent_percent_encoded(self):
+		file_name = "Hindi_WOW हब संचालन मैनुअल.pdf"
+		backend = S3Backend(_config())
+		backend._client = client = boto3.client(
+			"s3", region_name="ap-south-1", aws_access_key_id="test", aws_secret_access_key="test"
+		)
+		with Stubber(client) as stubber, tempfile.NamedTemporaryFile(suffix=".pdf") as f:
+			f.write(b"%PDF-1.4 test")
+			f.flush()
+			stubber.add_response(
+				"put_object",
+				{},
+				{
+					"Bucket": ANY,
+					"Key": "a/b.pdf",
+					"Body": ANY,
+					"ChecksumAlgorithm": ANY,
+					"ContentType": "application/pdf",
+					"Metadata": {"file_name": quote(file_name)},
+				},
+			)
+			self.assertEqual(backend.upload(f.name, "a/b.pdf", "application/pdf", True, file_name), "a/b.pdf")
+			stubber.assert_no_pending_responses()
+		self.assertTrue(quote(file_name).isascii())
+
+	def test_ascii_file_name_round_trips(self):
+		self._upload("report final.pdf")
+
+	def test_empty_file_name_uploads(self):
+		self._upload(None)
+
+	def test_raw_non_ascii_metadata_is_rejected_by_botocore(self):
+		client = boto3.client(
+			"s3", region_name="ap-south-1", aws_access_key_id="test", aws_secret_access_key="test"
+		)
+		with self.assertRaises(ParamValidationError) as ctx:
+			client.put_object(Bucket="b", Key="k", Body=b"x", Metadata={"file_name": "हब.pdf"})
+		self.assertIn("ASCII", str(ctx.exception))
+
+	def test_non_ascii_file_name_gets_valid_content_disposition(self):
+		backend, mock_client = _backend_with_mock_client()
+		mock_client.generate_presigned_url.return_value = "https://signed.example.com/x"
+		file_name = "Hindi_WOW हब संचालन मैनुअल.pdf"
+		backend.get_url("a/b.pdf", file_name=file_name, bucket_type="private")
+		_, kwargs = mock_client.generate_presigned_url.call_args
+		value = kwargs["Params"]["ResponseContentDisposition"]
+		self.assertTrue(value.isascii())
+		self.assertEqual(unquote(value.split("filename*=UTF-8''")[1]), file_name)

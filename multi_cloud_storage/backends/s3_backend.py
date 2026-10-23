@@ -5,13 +5,14 @@ import datetime
 import random
 import re
 import string
+from urllib.parse import quote
 
 import boto3
 import frappe
 from botocore.client import Config
 from botocore.exceptions import ClientError
 
-from .base import CloudStorageBackend
+from .base import CloudStorageBackend, build_content_disposition
 
 
 class S3Backend(CloudStorageBackend):
@@ -73,7 +74,7 @@ class S3Backend(CloudStorageBackend):
 	def upload(self, file_path, key, content_type, is_private, file_name=None):
 		bucket_type = "private" if is_private else "public"
 		bucket = self._bucket(bucket_type)
-		extra = {"ContentType": content_type, "Metadata": {"file_name": file_name or ""}}
+		extra = {"ContentType": content_type, "Metadata": {"file_name": quote(file_name or "")}}
 		if not is_private:
 			extra["ACL"] = "public-read"
 		try:
@@ -97,7 +98,7 @@ class S3Backend(CloudStorageBackend):
 		params = {"Bucket": bucket, "Key": key}
 		if file_name:
 			disposition = "attachment" if as_attachment else "inline"
-			params["ResponseContentDisposition"] = f'{disposition}; filename="{file_name}"'
+			params["ResponseContentDisposition"] = build_content_disposition(disposition, file_name)
 		return self.client.generate_presigned_url("get_object", Params=params, ExpiresIn=expiry)
 
 	def get_public_url(self, key):
