@@ -21,7 +21,7 @@ def _backend_with_mock_client():
 
 
 class TestAzureBackendUploadMetadata(IntegrationTestCase):
-	"""Azure blob metadata must be ASCII, so upload() percent-encodes the File name."""
+	"""Azure blob metadata must be ASCII, so upload() percent-encodes a non-ASCII File name."""
 
 	def _upload(self, file_name):
 		backend, blob_client = _backend_with_mock_client()
@@ -37,8 +37,8 @@ class TestAzureBackendUploadMetadata(IntegrationTestCase):
 		self.assertTrue(value.isascii())
 		self.assertEqual(unquote(value), file_name)
 
-	def test_ascii_file_name_round_trips(self):
-		self.assertEqual(unquote(self._upload("report final.pdf")), "report final.pdf")
+	def test_ascii_file_name_is_unchanged(self):
+		self.assertEqual(self._upload("report final.pdf"), "report final.pdf")
 
 	def test_empty_file_name(self):
 		self.assertEqual(self._upload(None), "")

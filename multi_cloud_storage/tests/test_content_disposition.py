@@ -1,11 +1,11 @@
 # Copyright (c) 2026, Bhushan Barbuddhe and contributors
 # For license information, please see license.txt
 
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from frappe.tests import IntegrationTestCase
 
-from multi_cloud_storage.backends.base import build_content_disposition
+from multi_cloud_storage.backends.base import build_content_disposition, build_metadata_file_name
 
 HINDI = "Hindi_WOW हब संचालन मैनुअल.pdf"
 
@@ -45,3 +45,20 @@ class TestBuildContentDisposition(IntegrationTestCase):
 
 	def test_disposition_is_passed_through(self):
 		self.assertTrue(build_content_disposition("attachment", HINDI).startswith("attachment; "))
+
+
+class TestBuildMetadataFileName(IntegrationTestCase):
+	"""Metadata must be ASCII: plain names are unchanged, anything else is percent-encoded."""
+
+	def test_plain_name_is_unchanged(self):
+		self.assertEqual(build_metadata_file_name("report final.pdf"), "report final.pdf")
+
+	def test_empty_or_none_is_empty(self):
+		self.assertEqual(build_metadata_file_name(None), "")
+		self.assertEqual(build_metadata_file_name(""), "")
+
+	def test_non_ascii_name_is_encoded_and_ascii(self):
+		value = build_metadata_file_name(HINDI)
+		self.assertEqual(value, quote(HINDI))
+		self.assertTrue(value.isascii())
+		self.assertEqual(unquote(value), HINDI)

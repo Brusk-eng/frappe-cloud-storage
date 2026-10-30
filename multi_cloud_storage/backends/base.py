@@ -14,6 +14,12 @@ def build_content_disposition(disposition, file_name):
 	return f"{disposition}; filename=\"{fallback}\"; filename*=UTF-8''{quote(file_name, safe='')}"
 
 
+def build_metadata_file_name(file_name):
+	"""Object-metadata value for the File name; metadata must be ASCII, so only non-ASCII names are percent-encoded."""
+	file_name = file_name or ""
+	return file_name if file_name.isascii() else quote(file_name)
+
+
 class CloudStorageBackend(ABC):
 	@abstractmethod
 	def upload(self, file_path, key, content_type, is_private, file_name=None):

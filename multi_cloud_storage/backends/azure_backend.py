@@ -5,13 +5,12 @@ import datetime
 import random
 import string
 from pathlib import Path
-from urllib.parse import quote
 
 import frappe
 from azure.core.exceptions import ResourceNotFoundError
 from azure.storage.blob import BlobSasPermissions, BlobServiceClient, ContentSettings, generate_blob_sas
 
-from .base import CloudStorageBackend, build_content_disposition
+from .base import CloudStorageBackend, build_content_disposition, build_metadata_file_name
 
 
 class AzureBackend(CloudStorageBackend):
@@ -86,7 +85,7 @@ class AzureBackend(CloudStorageBackend):
 			blob_client.upload_blob(
 				Path(file_path).read_bytes(),
 				content_settings=ContentSettings(content_type=content_type),
-				metadata={"file_name": quote(file_name or "")},
+				metadata={"file_name": build_metadata_file_name(file_name)},
 				overwrite=True,
 			)
 		except Exception as e:
