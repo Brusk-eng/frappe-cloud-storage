@@ -1,7 +1,23 @@
 # Copyright (c) 2026, Bhushan Barbuddhe and contributors
 # For license information, please see license.txt
 
+import re
 from abc import ABC, abstractmethod
+from urllib.parse import quote
+
+
+def build_content_disposition(disposition, file_name):
+	"""Content-Disposition value that is valid HTTP for any file name; plain names are unchanged."""
+	if re.fullmatch(r"[ -!#-\[\]-~]*", file_name):
+		return f'{disposition}; filename="{file_name}"'
+	fallback = re.sub(r"(?:[^!#-\[\]-~]|\s)+", "_", file_name)
+	return f"{disposition}; filename=\"{fallback}\"; filename*=UTF-8''{quote(file_name, safe='')}"
+
+
+def build_metadata_file_name(file_name):
+	"""Object-metadata value for the File name; metadata must be ASCII, so only non-ASCII names are percent-encoded."""
+	file_name = file_name or ""
+	return file_name if file_name.isascii() else quote(file_name)
 
 
 class CloudStorageBackend(ABC):
