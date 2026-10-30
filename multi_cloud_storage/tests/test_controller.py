@@ -356,7 +356,13 @@ class TestGenerateFile(IntegrationTestCase):
 	generate_file is the redirect every private file_url points at. It must pass the
 	resolved as_attachment value through to the backend rather than just hardcoding
 	inline or attachment -- that's the whole point of threading the flag through.
+	The File-permission check has its own tests in TestGenerateFileAccess.
 	"""
+
+	def setUp(self):
+		patcher = patch.object(controller, "_require_private_file_access")
+		patcher.start()
+		self.addCleanup(patcher.stop)
 
 	def test_redirects_with_inline_default_for_image(self):
 		fake_backend = _FakeBackend()
@@ -381,3 +387,97 @@ class TestGenerateFile(IntegrationTestCase):
 		with patch.object(controller, "get_backend", lambda: None):
 			with self.assertRaises(frappe.ValidationError):
 				controller.generate_file(key="private:a/b.pdf", file_name="b.pdf")
+
+	def test_file_name_is_passed_through_without_extra_decoding(self):
+		fake_backend = _FakeBackend()
+		with patch.object(controller, "get_backend", lambda: fake_backend):
+			controller.generate_file(key="private:a/b.pdf", file_name="100%25.pdf")
+		self.assertEqual(fake_backend.get_url_calls[0][1], "100%25.pdf")
+
+
+class TestGenerateFileAccess(IntegrationTestCase):
+	"""A private key only yields a signed URL when the caller can read a File that points at it."""
+
+	def _call(self, key, files, can_read):
+		fake_backend = _FakeBackend()
+		with (
+			patch.object(controller, "get_backend", lambda: fake_backend),
+			patch.object(controller.frappe, "get_all", return_value=files) as get_all,
+			patch.object(controller.frappe, "has_permission", return_value=can_read) as has_perm,
+		):
+			controller.generate_file(key=key, file_name="b.pdf")
+		return fake_backend, get_all, has_perm
+
+	def test_private_key_with_readable_file_redirects(self):
+		fake_backend, get_all, has_perm = self._call("private:a/b.pdf", ["FILE-1"], True)
+		self.assertEqual(fake_backend.get_url_calls, [("a/b.pdf", "b.pdf", "private", False)])
+		get_all.assert_any_call("File", filters={"content_hash": "private:a/b.pdf"}, pluck="name")
+		has_perm.assert_called_once_with("File", "read", doc="FILE-1")
+
+	def test_private_key_without_read_permission_is_refused(self):
+		fake_backend = _FakeBackend()
+		with (
+			patch.object(controller, "get_backend", lambda: fake_backend),
+			patch.object(controller.frappe, "get_all", return_value=["FILE-1"]),
+			patch.object(controller.frappe, "has_permission", return_value=False),
+		):
+			with self.assertRaises(frappe.PermissionError):
+				controller.generate_file(key="private:a/b.pdf", file_name="b.pdf")
+		self.assertEqual(fake_backend.get_url_calls, [])
+
+	def test_unknown_private_key_is_refused(self):
+		fake_backend = _FakeBackend()
+		with (
+			patch.object(controller, "get_backend", lambda: fake_backend),
+			patch.object(controller.frappe, "get_all", return_value=[]),
+		):
+			with self.assertRaises(frappe.PermissionError):
+				controller.generate_file(key="private:a/made-up.pdf", file_name="b.pdf")
+		self.assertEqual(fake_backend.get_url_calls, [])
+
+	def test_key_without_prefix_is_treated_as_private(self):
+		fake_backend = _FakeBackend()
+		with (
+			patch.object(controller, "get_backend", lambda: fake_backend),
+			patch.object(controller.frappe, "get_all", return_value=[]) as get_all,
+		):
+			with self.assertRaises(frappe.PermissionError):
+				controller.generate_file(key="a/b.pdf", file_name="b.pdf")
+		get_all.assert_any_call("File", filters={"content_hash": "private:a/b.pdf"}, pluck="name")
+
+	def test_public_key_skips_the_permission_check(self):
+		fake_backend = _FakeBackend()
+		with (
+			patch.object(controller, "get_backend", lambda: fake_backend),
+			patch.object(controller.frappe, "get_all") as get_all,
+		):
+			controller.generate_file(key="public:a/b.pdf", file_name="b.pdf")
+		self.assertNotIn(("File",), [c.args[:1] for c in get_all.call_args_list])
+		self.assertEqual(fake_backend.get_url_calls, [("a/b.pdf", "b.pdf", "public", False)])
+
+	def test_any_readable_file_among_several_is_enough(self):
+		with (
+			patch.object(controller.frappe, "get_all", return_value=["F1", "F2"]),
+			patch.object(controller.frappe, "has_permission", side_effect=[False, True]),
+		):
+			controller._require_private_file_access("private:a/b.pdf")
+
+
+class TestDecodeKey(IntegrationTestCase):
+	"""Keys are decoded only up to their private:/public: prefix; real percent signs survive."""
+
+	def test_clean_key_is_unchanged(self):
+		self.assertEqual(controller._decode_key("private:a/b.pdf"), "private:a/b.pdf")
+
+	def test_single_encoded_prefix_is_decoded(self):
+		self.assertEqual(controller._decode_key("private%3Aa/b.pdf"), "private:a/b.pdf")
+
+	def test_double_encoded_prefix_is_decoded(self):
+		self.assertEqual(controller._decode_key("private%253Aa%252Fb.pdf"), "private:a/b.pdf")
+
+	def test_literal_percent_after_the_prefix_is_kept(self):
+		self.assertEqual(controller._decode_key("private:a/100%25.pdf"), "private:a/100%25.pdf")
+
+	def test_empty_and_none_pass_through(self):
+		self.assertIsNone(controller._decode_key(None))
+		self.assertEqual(controller._decode_key(""), "")

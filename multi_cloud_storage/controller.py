@@ -125,16 +125,15 @@ def _parse_as_attachment(explicit, file_name):
 	return str(explicit).strip().lower() in ("1", "true", "yes")
 
 
-def _decode_query_param(value):
-	"""Fully decode query string values (handles private%253A / private%3A → private:)."""
+def _decode_key(value):
+	"""Decode a content_hash key up to its private:/public: prefix (handles private%253A / private%3A)."""
 	if not value or not isinstance(value, str):
 		return value
 	s = value.strip()
-	for _ in range(12):
-		n = unquote(s)
-		if n == s:
+	for _ in range(3):
+		if s.startswith((CONTENT_HASH_PRIVATE, CONTENT_HASH_PUBLIC)) or "%" not in s:
 			break
-		s = n
+		s = unquote(s)
 	return s
 
 
@@ -325,18 +324,25 @@ def delete_from_cloud(doc, method=None):
 	backend.delete(key, bucket_type)
 
 
+def _require_private_file_access(content_hash):
+	"""Raise unless the caller can read a File that points at this private cloud object."""
+	names = frappe.get_all("File", filters={"content_hash": content_hash}, pluck="name")
+	if not any(frappe.has_permission("File", "read", doc=name) for name in names):
+		frappe.throw(frappe._("You do not have permission to access this file"), frappe.PermissionError)
+
+
 @frappe.whitelist()
 def generate_file(key: str | None = None, file_name: str | None = None, as_attachment: str | None = None):
 	if not key:
 		frappe.local.response["body"] = "Key not found."
 		return
-	key = _decode_query_param(key)
-	if file_name:
-		file_name = _decode_query_param(file_name)
+	key = _decode_key(key)
 	backend = get_backend()
 	if not backend:
 		frappe.throw(frappe._("MultiCloud Storage is not enabled"))
 	parsed_key, bucket_type = _parse_content_hash(key)
+	if bucket_type == "private":
+		_require_private_file_access(CONTENT_HASH_PRIVATE + parsed_key)
 	attachment = _parse_as_attachment(as_attachment, file_name)
 	url = backend.get_url(parsed_key, file_name, bucket_type, as_attachment=attachment)
 	frappe.local.response["type"] = "redirect"
