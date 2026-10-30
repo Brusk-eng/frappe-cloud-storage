@@ -149,7 +149,9 @@ class TestS3BackendUploadMetadata(IntegrationTestCase):
 
 	def _upload(self, file_name, expected):
 		backend, mock_client = _backend_with_mock_client()
-		self.assertEqual(backend.upload("/tmp/x.pdf", "a/b.pdf", "application/pdf", True, file_name), "a/b.pdf")
+		self.assertEqual(
+			backend.upload("/tmp/x.pdf", "a/b.pdf", "application/pdf", True, file_name), "a/b.pdf"
+		)
 		_, kwargs = mock_client.upload_file.call_args
 		extra = kwargs["ExtraArgs"]
 		self.assertEqual(extra["Metadata"], {"file_name": expected})
